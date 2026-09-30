@@ -6,7 +6,7 @@ export const meta = {
     en: "xAI Grok video generation through CLI Proxy API",
     zh: "通过 CLI Proxy API 调用 xAI Grok 视频生成"
   },
-  version: "1.1.0",
+  version: "1.1.1",
   author: { name: "local" },
   channelTypes: [48],
   models: [
@@ -92,12 +92,12 @@ export function listArtifacts(task) {
 
 export function buildContentRequest(ctx) {
   if (!ctx || ctx.artifactKey !== "video") throw new Error("artifact_not_found");
-  const taskId = trimmed(ctx.upstreamTaskId);
-  if (!taskId) throw new Error("upstream task id is empty");
+  const url = videoUrl(ctx.data);
+  if (!/^https:\/\/vidgen\.x\.ai(?::443)?\//i.test(url)) throw new Error("video url is invalid");
   return {
-    url: baseUrl(ctx.baseUrl) + "/v1/videos/" + encodeURIComponent(taskId) + "/content",
+    url: url,
     method: "GET",
-    headers: { Authorization: "Bearer " + ctx.apiKey }
+    credentialless: true
   };
 }
 
