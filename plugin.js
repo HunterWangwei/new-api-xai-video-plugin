@@ -6,7 +6,7 @@ export const meta = {
     en: "xAI Grok video generation through CLI Proxy API",
     zh: "通过 CLI Proxy API 调用 xAI Grok 视频生成"
   },
-  version: "1.0.8",
+  version: "1.0.9",
   author: { name: "local" },
   channelTypes: [48],
   models: [
@@ -90,24 +90,11 @@ export function listArtifacts(task) {
   return task && task.status === "SUCCESS" ? [{ key: "video", type: "video", mimeType: "video/mp4" }] : [];
 }
 
-async function downloadVideoDataUrl(ctx) {
-  const source = videoUrl(ctx.data);
-  if (!source) throw new Error("video url is empty");
-  const response = await fetch(source, { headers: { Authorization: "Bearer " + ctx.apiKey } });
-  if (!response.ok) throw new Error("video download failed: HTTP " + response.status);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.length) throw new Error("video download is empty");
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize));
-  }
-  return "data:video/mp4;base64," + btoa(binary);
-}
-
-export async function buildContentRequest(ctx) {
+export function buildContentRequest(ctx) {
   if (!ctx || ctx.artifactKey !== "video") throw new Error("artifact_not_found");
-  return { url: await downloadVideoDataUrl(ctx), method: "GET" };
+  const url = videoUrl(ctx.data);
+  if (!url) throw new Error("video url is empty");
+  return { url: url, method: "GET", credentialless: true };
 }
 
 export const protocols = {
