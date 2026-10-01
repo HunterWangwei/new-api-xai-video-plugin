@@ -4,7 +4,7 @@
 
 用户 -> New API（xAI 渠道）-> CLI Proxy API -> xAI
 
-测试版本：**1.2.0-test.1**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
+测试版本：**1.2.0-test.2**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
 
 - `grok-imagine-video-1.5-preview`
 - `grok-imagine-video-1.5`
@@ -15,24 +15,30 @@
 在 New API 的任务插件管理页面导入以下原始文件地址，并确认 `xai-video` 插件已启用：
 
 ```text
-https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/codex/billing-test/plugin.js
+https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/codex/billing-readable-test/plugin.js
 ```
 
 沿用 **xAI 类型（48）** 渠道，无需改成 OpenAI 类型（1）。渠道的 Base URL 填 CLI Proxy API 服务地址，渠道密钥填该服务的 API Key；在渠道中启用需要提供的模型。用户侧使用 New API 的令牌请求 New API 地址，不直接使用渠道密钥。模型在插件中声明并不代表渠道或账号池一定可用，请以实际渠道配置为准。
 
 ## 计费测试
 
-此分支仅用于计费验证；稳定版仍在 `main`。在 New API 管理端为三个模型分别设置 xai-video 的任务价格表达式（插件覆盖项的键为 `xai-video::<模型名>`）：
+此分支仅用于计费验证；稳定版仍在 `main`，旧的 ticks 计费测试版仍在 `codex/billing-test`。导入后，在 New API 管理端分别为三个模型设置 xai-video 的任务价格表达式（插件覆盖项的键为 `xai-video::<模型名>`）。`grok-imagine-video-1.5` 和 `grok-imagine-video-1.5-preview` 使用同一表达式：
 
 ```text
-tier("xai", u("cost_units") * 0.0001)
+u("resolution") == "1080p" ? tier("1080p", u("seconds") * 0.25 + u("image_count") * 0.01) : u("resolution") == "720p" ? tier("720p", u("seconds") * 0.14 + u("image_count") * 0.01) : tier("480p", u("seconds") * 0.08 + u("image_count") * 0.01)
 ```
 
-表达式结果是美元/次，再由 New API 按额度换算及分组倍率结算；不要再除以一百万。`cost_units` 是上游用量单位：一单位对应 1,000,000 个 `cost_in_usd_ticks`，即 $0.0001。若需要加价，可在表达式末尾乘倍率，但测试时建议先用上式对账。**仅导入插件、不配置表达式，不会自动启用按用量计费**；先确认定价页面显示为任务表达式计费，再用测试用户令牌提交任务。
+`grok-imagine-video` 使用：
 
-提交时按请求的 `seconds`、`resolution` 或 `size` 和是否含图片估算预扣：1.5 及 preview 暂按 480p $0.08/秒、720p $0.14/秒、1080p $0.25/秒，图片另加 $0.01；旧模型按 480p $0.05/秒、720p $0.07/秒，图片另加 $0.002。默认按 6 秒估算；未识别的尺寸按该模型最高一档估算。preview 没有独立报价，此处暂按 1.5 估算。输入视频的额外费用未纳入预扣。
+```text
+u("resolution") == "480p" ? tier("480p", u("seconds") * 0.05 + u("image_count") * 0.002) : tier("720p", u("seconds") * 0.07 + u("image_count") * 0.002)
+```
 
-任务成功时，如果完成响应的 `usage.cost_in_usd_ticks` 是有效非负整数，以其为准覆盖预扣估算；缺失或无效时保留估算值。失败任务由 New API 按任务结算机制退款。**尚未在真实 New API 上验证计费日志和最终扣款**；先用少量测试任务核对预扣、最终扣款、分组倍率及失败退款。不要把生产模型定价直接切到此测试版本。
+用量字段直接显示 `seconds`（秒）、`resolution`（分辨率）和 `image_count`（输入图片数量）。例如 1.5 模型的 6 秒 720p 文生视频为 $0.84，有一张输入图片则为 $0.85。表达式结果是美元/次，再由 New API 按额度换算及分组倍率结算；不要再除以一百万。preview 暂按 1.5 同价，输入视频额外费用不在上述表达式内。
+
+提交时从请求读取秒数和分辨率；未提供秒数按 6 秒，未提供分辨率和尺寸按 720p。无法识别的显式尺寸按该模型已列出的最高档估算。完成响应如有明确的秒数或分辨率才会更新对应事实；目前测试中上游主要返回费用 ticks，**此版本不再据 ticks 改写最终金额**。因此账单按请求规格及上述公开表达式计算，不保证与上游实际扣费完全相同。
+
+旧测试版保存的 `u("cost_units")` 表达式**与本版 schema 不兼容**。导入本版后应立即替换三个模型的插件价格表达式，期间可能出现 `model_price_error`，不要在生产渠道直接切换。仅导入插件不会自动启用按秒计费。**尚未在真实 New API 上验证此新版的定价页面和最终扣款**；先用少量测试任务核对预扣、完成结算、分组倍率及失败退款。
 
 ## 请求示例
 

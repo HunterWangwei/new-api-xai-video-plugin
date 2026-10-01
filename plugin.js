@@ -6,7 +6,7 @@ export const meta = {
     en: "xAI Grok video generation through CLI Proxy API",
     zh: "通过 CLI Proxy API 调用 xAI Grok 视频生成"
   },
-  version: "1.2.0-test.1",
+  version: "1.2.0-test.2",
   author: { name: "local" },
   channelTypes: [48],
   models: [
@@ -16,12 +16,25 @@ export const meta = {
   ],
   fetchMode: "per_task",
   usageSchema: {
-    cost_units: {
+    seconds: {
       type: "number",
-      unit: "credit",
-      description: { en: "Upstream video usage units", zh: "上游视频用量单位" }
+      unit: "second",
+      description: { en: "Video generation unit price", zh: "视频生成单价" }
+    },
+    resolution: {
+      enum: ["480p", "720p", "1080p"],
+      description: { en: "Output video resolution", zh: "输出视频分辨率" }
+    },
+    image_count: {
+      type: "number",
+      unit: "count",
+      description: { en: "Input image unit price", zh: "输入图片单价" }
     }
   },
+  usageExamples: [
+    { label: "480p 6s", facts: { seconds: 6, resolution: "480p", image_count: 0 } },
+    { label: "720p 6s", facts: { seconds: 6, resolution: "720p", image_count: 0 } }
+  ],
   protocols: ["openai_video"]
 };
 
@@ -38,16 +51,13 @@ function videoUrl(body) {
   return trimmed(body.video_url || (body.video && body.video.url) || body.url);
 }
 
-// One usage unit represents 1,000,000 xAI USD ticks, or $0.0001.
-function costUnits(usd) {
-  return Math.round(usd * 10000);
-}
-
 function outputResolution(req, model) {
   const resolution = trimmed(req.resolution).toLowerCase();
   if (resolution === "480p" || resolution === "720p") return resolution;
   if (resolution === "1080p") return model === "grok-imagine-video" ? "720p" : resolution;
-  const match = /^(\d+)x(\d+)$/i.exec(trimmed(req.size));
+  const size = trimmed(req.size);
+  if (!size) return "720p";
+  const match = /^(\d+)x(\d+)$/i.exec(size);
   if (match) {
     const shortSide = Math.min(Number(match[1]), Number(match[2]));
     if (shortSide <= 480) return "480p";
@@ -63,21 +73,22 @@ export function extractUsage(ctx) {
   const seconds = Number.isFinite(duration) && duration > 0
     ? Math.min(duration, 3600) : 6;
   const resolution = outputResolution(req, model);
-  const rates = model === "grok-imagine-video"
-    ? { "480p": 0.05, "720p": 0.07 }
-    : { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
   const image = req.image || req.input_reference || req.image_url || req.imageUrl;
-  const imagePrice = image ? (model === "grok-imagine-video" ? 0.002 : 0.01) : 0;
-  return { cost_units: costUnits(seconds * rates[resolution] + imagePrice) };
+  return { seconds, resolution, image_count: image ? 1 : 0 };
 }
 
 export function extractUsageOnComplete(ctx, result, body) {
-  const data = body && body.usage ? body : result && result.data || {};
-  const ticks = data.usage && data.usage.cost_in_usd_ticks;
-  if (ticks === undefined || ticks === null || ticks === "") return null;
-  const value = Number(ticks);
-  if (!Number.isSafeInteger(value) || value < 0 || value / 1000000 > 2147483647) return null;
-  return { cost_units: value / 1000000 };
+  const data = body && typeof body === "object" ? body : result && result.data || {};
+  const facts = {};
+  const duration = Number(data.seconds || data.duration);
+  if (Number.isFinite(duration) && duration > 0 && duration <= 3600) facts.seconds = duration;
+  if (data.resolution || data.size) {
+    const resolution = trimmed(data.resolution).toLowerCase();
+    if (["480p", "720p", "1080p"].includes(resolution) || /^\d+x\d+$/i.test(trimmed(data.size))) {
+      facts.resolution = outputResolution(data, ctx.upstreamModel || ctx.model);
+    }
+  }
+  return Object.keys(facts).length ? facts : null;
 }
 
 export function buildSubmitRequest(ctx) {
