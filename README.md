@@ -4,7 +4,7 @@
 
 用户 -> New API（xAI 渠道）-> CLI Proxy API -> xAI
 
-当前版本：**1.1.1**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
+测试版本：**1.2.0-test.1**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
 
 - `grok-imagine-video-1.5-preview`
 - `grok-imagine-video-1.5`
@@ -15,10 +15,24 @@
 在 New API 的任务插件管理页面导入以下原始文件地址，并确认 `xai-video` 插件已启用：
 
 ```text
-https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/main/plugin.js
+https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/codex/billing-test/plugin.js
 ```
 
 沿用 **xAI 类型（48）** 渠道，无需改成 OpenAI 类型（1）。渠道的 Base URL 填 CLI Proxy API 服务地址，渠道密钥填该服务的 API Key；在渠道中启用需要提供的模型。用户侧使用 New API 的令牌请求 New API 地址，不直接使用渠道密钥。模型在插件中声明并不代表渠道或账号池一定可用，请以实际渠道配置为准。
+
+## 计费测试
+
+此分支仅用于计费验证；稳定版仍在 `main`。在 New API 管理端为三个模型分别设置 xai-video 的任务价格表达式（插件覆盖项的键为 `xai-video::<模型名>`）：
+
+```text
+tier("xai", u("cost_units") * 0.0001)
+```
+
+表达式结果是美元/次，再由 New API 按额度换算及分组倍率结算；不要再除以一百万。`cost_units` 是上游用量单位：一单位对应 1,000,000 个 `cost_in_usd_ticks`，即 $0.0001。若需要加价，可在表达式末尾乘倍率，但测试时建议先用上式对账。**仅导入插件、不配置表达式，不会自动启用按用量计费**；先确认定价页面显示为任务表达式计费，再用测试用户令牌提交任务。
+
+提交时按请求的 `seconds`、`resolution` 或 `size` 和是否含图片估算预扣：1.5 及 preview 暂按 480p $0.08/秒、720p $0.14/秒、1080p $0.25/秒，图片另加 $0.01；旧模型按 480p $0.05/秒、720p $0.07/秒，图片另加 $0.002。默认按 6 秒估算；未识别的尺寸按该模型最高一档估算。preview 没有独立报价，此处暂按 1.5 估算。输入视频的额外费用未纳入预扣。
+
+任务成功时，如果完成响应的 `usage.cost_in_usd_ticks` 是有效非负整数，以其为准覆盖预扣估算；缺失或无效时保留估算值。失败任务由 New API 按任务结算机制退款。**尚未在真实 New API 上验证计费日志和最终扣款**；先用少量测试任务核对预扣、最终扣款、分组倍率及失败退款。不要把生产模型定价直接切到此测试版本。
 
 ## 请求示例
 
@@ -42,7 +56,7 @@ curl -H 'Authorization: Bearer YOUR_NEW_API_TOKEN' \
 
 ## 制品预览与安全设置
 
-1.1.1 从轮询结果中持久化的 `video.url` 读取实际视频地址，以**不携带渠道凭据**的 GET 请求获取 `vidgen.x.ai` 视频。旧版通过 CLI Proxy API 的 `/v1/videos/{id}/content` 获取制品，在已验证的环境中该路径不可用。插件不会把渠道密钥发送给视频 CDN。
+插件从轮询结果中持久化的 `video.url` 读取实际视频地址，以**不携带渠道凭据**的 GET 请求获取 `vidgen.x.ai` 视频。旧版通过 CLI Proxy API 的 `/v1/videos/{id}/content` 获取制品，在已验证的环境中该路径不可用。插件不会把渠道密钥发送给视频 CDN。
 
 New API 服务端必须能解析并访问 `vidgen.x.ai`。若开启 SSRF 防护，且启用了“对域名应用 IP 过滤”及 IP 白名单，域名解析出的地址也必须满足白名单规则。请在 **New API 实际运行的容器或主机**中检查解析结果：
 
@@ -56,7 +70,7 @@ CDN 地址可能随时间和运行环境变化。按 IP 逐条放行只适合临
 ## 排查
 
 - `model_not_found` 或没有可用渠道：检查插件是否启用、xAI 类型（48）渠道是否启用对应模型，以及 CLI Proxy API 账号池是否可用。不要把渠道改为类型 1。
-- 任务成功但制品返回 `410 artifact_gone`：确认安装的是 1.1.1，任务最新查询响应含 `video.url`，并对新任务重试。
+- 任务成功但制品返回 `410 artifact_gone`：确认安装的是含制品直链逻辑的版本，任务最新查询响应含 `video.url`，并对新任务重试。
 - 制品返回 `502 artifact_request_rejected`：检查 New API 的 SSRF 域名/IP/端口规则与服务端解析结果；插件的无凭据外部 URL 请求仍需通过服务器的抓取安全校验。
 - 视频 CDN 访问超时或上游错误：从 New API 实际运行环境检查 DNS、出站网络及 CDN 可达性，不能仅以生成任务成功判断下载可用。
 
