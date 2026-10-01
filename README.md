@@ -4,7 +4,7 @@
 
 用户 -> New API（xAI 渠道）-> CLI Proxy API -> xAI
 
-测试版本：**1.2.0-test.2**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
+测试版本：**1.2.0-test.3**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
 
 - `grok-imagine-video-1.5-preview`
 - `grok-imagine-video-1.5`
@@ -15,10 +15,22 @@
 在 New API 的任务插件管理页面导入以下原始文件地址，并确认 `xai-video` 插件已启用：
 
 ```text
-https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/codex/billing-readable-test/plugin.js
+https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/codex/strict-official-video-test/plugin.js
 ```
 
 沿用 **xAI 类型（48）** 渠道，无需改成 OpenAI 类型（1）。渠道的 Base URL 填 CLI Proxy API 服务地址，渠道密钥填该服务的 API Key；在渠道中启用需要提供的模型。用户侧使用 New API 的令牌请求 New API 地址，不直接使用渠道密钥。模型在插件中声明并不代表渠道或账号池一定可用，请以实际渠道配置为准。
+
+## 请求接口与严格参数
+
+插件保留旧的 `POST /v1/videos` 请求格式，同时增加 xAI 官方的 `POST /v1/videos/generations` 格式。官方格式使用顶层 `model`、`prompt`、`duration`、`aspect_ratio`、`resolution`、`image`、`reference_images`、`reference_audios`、`last_frame`、`keyframes`、`generate_audio`、`output`、`storage_options` 和 `user` 字段。
+
+官方格式的 `duration` 支持 1 到 15 秒，默认 8 秒；旧接口的 `seconds` 默认 6 秒。`reference_images` 最多 7 张，`reference_audios` 最多 3 个，`keyframes` 最多 4 个。未知字段、冲突的 `duration`/`seconds`、无效 URL、超出范围的时长及不符合模型限制的组合会被拒绝，不再静默透传。
+
+官方入口、显式 `duration`、首尾帧、keyframes 或官方高级字段走上游 `/v1/videos/generations`。使用 `seconds` 的旧请求（含普通 URL 图片或参考图）继续走 `/v1/videos`。旧接口的 `input_reference`、`image_url`、`imageUrl`、`reference_image_urls` 和 `size` 参数继续兼容；图片支持旧版 `image_url.url` 嵌套形式。`duration` 和 `seconds` 同时提供时必须一致。
+
+官方入口默认分辨率为 `480p`，旧入口默认 `720p`；插件将默认值明确写入上游请求，使计费和提交规格一致。无论是否包含图片，都需要非空 `prompt`。经典模型不支持的 1080p 请求会明确拒绝，不再静默降为 720p。
+
+依赖 New API 的 `meta.routes` / `native` 插件契约和 CLI Proxy API 的原生 `/v1/videos/generations` 路由。若部署版本未提供该上游路由，请升级 CPA；插件不会在失败后自动重试另一入口，避免重复创建和扣费。
 
 ## 计费测试
 
@@ -36,7 +48,9 @@ u("resolution") == "480p" ? tier("480p", u("seconds") * 0.05 + u("image_count") 
 
 用量字段直接显示 `seconds`（秒）、`resolution`（分辨率）和 `image_count`（输入图片数量）。例如 1.5 模型的 6 秒 720p 文生视频为 $0.84，有一张输入图片则为 $0.85。表达式结果是美元/次，再由 New API 按额度换算及分组倍率结算；不要再除以一百万。preview 暂按 1.5 同价，输入视频额外费用不在上述表达式内。
 
-提交时从请求读取秒数和分辨率；未提供秒数按 6 秒，未提供分辨率和尺寸按 720p。无法识别的显式尺寸按该模型已列出的最高档估算。完成响应如有明确的秒数或分辨率才会更新对应事实；目前测试中上游主要返回费用 ticks，**此版本不再据 ticks 改写最终金额**。因此账单按请求规格及上述公开表达式计算，不保证与上游实际扣费完全相同。
+提交时从请求读取秒数和分辨率；旧接口未提供秒数按 6 秒，官方接口未提供 `duration` 按 8 秒。完成响应中的 `video.duration` 或明确分辨率会更新对应事实；费用 ticks 不会改写插件计费事实。因此账单按请求规格及上述公开表达式计算，不保证与上游实际扣费完全相同。
+
+`image_count` 是插件侧计费字段：当前按 `image`、`reference_images`、`last_frame` 和每个 `keyframes[].image` 的数量计入。它是便于 New API 计费的规则，不代表 xAI 官方账单中的唯一计价口径。
 
 旧测试版保存的 `u("cost_units")` 表达式**与本版 schema 不兼容**。导入本版后应立即替换三个模型的插件价格表达式，期间可能出现 `model_price_error`，不要在生产渠道直接切换。仅导入插件不会自动启用按秒计费。**尚未在真实 New API 上验证此新版的定价页面和最终扣款**；先用少量测试任务核对预扣、完成结算、分组倍率及失败退款。
 
@@ -59,6 +73,31 @@ curl -H 'Authorization: Bearer YOUR_NEW_API_TOKEN' \
 ```
 
 完成后的响应包含 `video.url`。New API 的预览和下载也可通过 `GET /v1/videos/TASK_ID/content` 或 `GET /v1/tasks/TASK_ID/artifacts/video/content` 获取；使用 New API 用户令牌访问，不要在浏览器或日志中暴露渠道密钥。
+
+### 官方格式示例
+
+向 New API 的 `POST /v1/videos/generations` 发送：
+
+```json
+{
+  "model": "grok-imagine-video-1.5-preview",
+  "prompt": "Animate the scene in the reference image",
+  "duration": 15,
+  "aspect_ratio": "3:2",
+  "resolution": "720p",
+  "reference_images": [
+    { "url": "https://YOUR_IMAGE_HOST/reference.png" }
+  ]
+}
+```
+
+本例提交用量为 `seconds: 15`、`resolution: "720p"`、`image_count: 1`。创建返回 `{"request_id":"<New API 公共任务 ID>"}`，用这个 ID 查询原有的 `GET /v1/videos/TASK_ID`。查询仍由 New API 的 `openai_video` 协议输出状态和视频数据，不宣称与 xAI SDK 的所有响应细节完全一致。
+
+### 验证范围
+
+本版包含静态检查和本地回归测试，覆盖旧契约、两种入口的参数规范化、截图中的 15 秒参考图请求、计费用量与提交一致性、冲突参数和非法输入拒绝，以及完成态时长、制品处理。
+
+**本版未导入真实 New API，也未完成 New API → CPA → xAI 的付费生成和最终扣款验证。** 不应仅凭本地测试就认定线上链路已修复。导入后请先核对上述示例的请求日志、15 秒预扣、参考图数量、最终实际时长与结算；已有错误账单不会自动修正。
 
 ## 制品预览与安全设置
 
