@@ -4,7 +4,7 @@
 
 用户 -> New API（xAI 渠道）-> CLI Proxy API -> xAI
 
-测试版本：**1.2.0-test.3**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
+测试版本：**1.2.0-test.4**。插件适用于 `openai_video` 协议，保持原有的渠道类型 `48`、`per_task` 轮询和三个模型：
 
 - `grok-imagine-video-1.5-preview`
 - `grok-imagine-video-1.5`
@@ -22,7 +22,23 @@ https://raw.githubusercontent.com/HunterWangwei/new-api-xai-video-plugin/codex/s
 
 ## 请求接口与严格参数
 
-插件保留旧的 `POST /v1/videos` 请求格式，同时增加 xAI 官方的 `POST /v1/videos/generations` 格式。官方格式使用顶层 `model`、`prompt`、`duration`、`aspect_ratio`、`resolution`、`image`、`reference_images`、`reference_audios`、`last_frame`、`keyframes`、`generate_audio`、`output`、`storage_options` 和 `user` 字段。
+插件保留旧的 `POST /v1/videos` 请求格式，同时通过 **`POST /xai/v1/videos/generations`** 接收 xAI 官方参数格式，上游请求仍发送到 CPA 的 `/v1/videos/generations`。官方格式使用顶层 `model`、`prompt`、`duration`、`aspect_ratio`、`resolution`、`image`、`reference_images`、`reference_audios`、`last_frame`、`keyframes`、`generate_audio`、`output`、`storage_options` 和 `user` 字段。
+
+### test.3 加载失败与 test.4 修正
+
+线上 New API `v1.0.0-rc.37` 的只读运行时诊断返回：
+
+```text
+plugin xai-video rejected from public routes: route POST /v1/videos/generations intersects static route GET /v1/videos/:task_id
+```
+
+这是公共路由注册失败，管理页面统一显示为“编译失败”，不是 JavaScript 语法错误。该版本的 `router/plugin-router.go` 在插件与静态路由之间按路径检查交集，不区分 HTTP 方法。因此即使是 POST，也不能注册会命中现有 GET 动态路径的 `/v1/videos/generations`。仅运行 Node 检查或不含公共路由的插件 lint 无法发现这类问题。
+
+`test.4` 仅调整插件原生入口为 `/xai/v1/videos/generations`，保留 `test.3` 的参数校验、时长和参考图计费修复、旧接口及上游官方路径。它**不提供未经转发配置的 `/v1/videos/generations` 客户端入口**；严格使用该原路径需要另行配置反向代理内部重写到别名，或修改宿主路由支持。本仓库未修改服务器或反向代理配置。
+
+从 `test.3` 更新时重新导入同一 raw 地址，并确认显示版本 `1.2.0-test.4`。已有 `seconds` / `resolution` / `image_count` 价格表达式无需因本次路由修正而改变。
+
+### 参数规则
 
 官方格式的 `duration` 支持 1 到 15 秒，默认 8 秒；旧接口的 `seconds` 默认 6 秒。`reference_images` 最多 7 张，`reference_audios` 最多 3 个，`keyframes` 最多 4 个。未知字段、冲突的 `duration`/`seconds`、无效 URL、超出范围的时长及不符合模型限制的组合会被拒绝，不再静默透传。
 
@@ -76,7 +92,7 @@ curl -H 'Authorization: Bearer YOUR_NEW_API_TOKEN' \
 
 ### 官方格式示例
 
-向 New API 的 `POST /v1/videos/generations` 发送：
+向 New API 的 `POST /xai/v1/videos/generations` 发送（注意客户端入口的 `/xai` 前缀，上游仍是官方路径）：
 
 ```json
 {
@@ -95,7 +111,9 @@ curl -H 'Authorization: Bearer YOUR_NEW_API_TOKEN' \
 
 ### 验证范围
 
-本版包含静态检查和本地回归测试，覆盖旧契约、两种入口的参数规范化、截图中的 15 秒参考图请求、计费用量与提交一致性、冲突参数和非法输入拒绝，以及完成态时长、制品处理。
+本版包含静态检查和本地回归测试，覆盖旧契约、两种入口的参数规范化、截图中的 15 秒参考图请求、计费用量与提交一致性、冲突参数和非法输入拒绝，以及完成态时长、制品处理。新增路由冲突回归模型，按 `rc.37` 的路径交集算法重现 `test.3` 冲突并检查别名；这是源码规则的本地测试，不等同于启动真实宿主。
+
+已通过线上只读 GET 查询确认 `test.3` 源码与发布版本一致、元数据可读取，以及公共路由被拒绝的具体错误。`test.4` 尚未通过真实宿主导入和完整路由注册验证。
 
 **本版未导入真实 New API，也未完成 New API → CPA → xAI 的付费生成和最终扣款验证。** 不应仅凭本地测试就认定线上链路已修复。导入后请先核对上述示例的请求日志、15 秒预扣、参考图数量、最终实际时长与结算；已有错误账单不会自动修正。
 
@@ -114,6 +132,7 @@ CDN 地址可能随时间和运行环境变化。按 IP 逐条放行只适合临
 
 ## 排查
 
+- `test.3` 显示“编译失败”，运行时错误含 `intersects static route GET /v1/videos/:task_id`：更新到 `test.4`，官方参数入口改用 `/xai/v1/videos/generations`；不要修改渠道类型或计费表达式来解决路由冲突。
 - `model_not_found` 或没有可用渠道：检查插件是否启用、xAI 类型（48）渠道是否启用对应模型，以及 CLI Proxy API 账号池是否可用。不要把渠道改为类型 1。
 - 任务成功但制品返回 `410 artifact_gone`：确认安装的是含制品直链逻辑的版本，任务最新查询响应含 `video.url`，并对新任务重试。
 - 制品返回 `502 artifact_request_rejected`：检查 New API 的 SSRF 域名/IP/端口规则与服务端解析结果；插件的无凭据外部 URL 请求仍需通过服务器的抓取安全校验。

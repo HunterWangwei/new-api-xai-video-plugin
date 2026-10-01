@@ -155,10 +155,10 @@ test("preserves submit, status, artifact, and protocol behavior", () => {
   }).kind, "submit");
 });
 
-test("supports the official generations route without changing the legacy route", () => {
+test("supports the official-format alias without changing the legacy route", () => {
   assert.deepEqual(plugin.meta.routes, [{
     method: "POST",
-    path: "/v1/videos/generations",
+    path: "/xai/v1/videos/generations",
     type: "submit",
     decode: "generateVideo",
     render: "videoCreated"
@@ -190,6 +190,58 @@ test("supports the official generations route without changing the legacy route"
   });
   assert.equal(legacy.kind, "submit");
   assert.equal(legacy.requestBody.seconds, "6");
+});
+
+test("native route avoids rc.37 cross-method static video path conflicts", () => {
+  // Mirrors routePatternsIntersect / routeIntersectsStaticRoute in:
+  // QuantumNous/new-api v1.0.0-rc.37 router/plugin-router.go.
+  // This is a regression model, not an execution of the Go router.
+  const intersects = (leftPath, rightPath) => {
+    const left = leftPath.replace(/^\//, "").split("/");
+    const right = rightPath.replace(/^\//, "").split("/");
+    for (let i = 0; ; i++) {
+      if (i >= left.length || i >= right.length) {
+        return i >= left.length && i >= right.length;
+      }
+      if (left[i].startsWith("*") || right[i].startsWith("*")) return true;
+      const ld = left[i].startsWith(":");
+      const rd = right[i].startsWith(":");
+      if (!ld && !rd && left[i] !== right[i]) return false;
+      if ((ld && right[i] === "") || (rd && left[i] === "")) return false;
+    }
+  };
+  const collides = (path, staticPath) => {
+    if (intersects(path, staticPath)) return true;
+    const wildcard = staticPath.lastIndexOf("/*");
+    if (wildcard >= 0 && wildcard + 2 < staticPath.length) {
+      const prefix = staticPath.slice(0, wildcard);
+      return intersects(path, prefix) || intersects(path, prefix + "/");
+    }
+    if (staticPath === "/") return false;
+    return intersects(path, staticPath.endsWith("/") ? staticPath.slice(0, -1) : staticPath + "/");
+  };
+  const staticRoutes = [
+    { method: "POST", path: "/v1/videos" },
+    { method: "GET", path: "/v1/videos/:task_id" },
+    { method: "GET", path: "/v1/videos/:task_id/content" },
+    { method: "HEAD", path: "/v1/videos/:task_id/content" }
+  ];
+  assert.equal(collides("/v1/videos/generations", staticRoutes[1].path), true);
+  for (const route of plugin.meta.routes) {
+    for (const existing of staticRoutes) {
+      assert.equal(collides(route.path, existing.path), false,
+        `${route.method} ${route.path} intersects ${existing.method} ${existing.path}`);
+    }
+  }
+  const intent = plugin.native.generateVideo({
+    body: { kind: "json", value: {
+      model: "grok-imagine-video-1.5", prompt: "test", duration: 15,
+      resolution: "720p", reference_images: [{ url: "https://example.com/a.png" }]
+    } }
+  });
+  const ctx = { ...intent, baseUrl: "https://proxy.example", apiKey: "placeholder" };
+  assert.equal(plugin.buildSubmitRequest(ctx).url, "https://proxy.example/v1/videos/generations");
+  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 15, resolution: "720p", image_count: 1 });
 });
 
 test("routes advanced official requests to the native xAI endpoint", () => {

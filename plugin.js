@@ -6,7 +6,7 @@ export const meta = {
     en: "xAI Grok video generation through CLI Proxy API",
     zh: "通过 CLI Proxy API 调用 xAI Grok 视频生成"
   },
-  version: "1.2.0-test.3",
+  version: "1.2.0-test.4",
   author: { name: "local" },
   channelTypes: [48],
   models: [
@@ -36,7 +36,8 @@ export const meta = {
     { label: "720p 6s", facts: { seconds: 6, resolution: "720p", image_count: 0 } }
   ],
   routes: [
-    { method: "POST", path: "/v1/videos/generations", type: "submit", decode: "generateVideo", render: "videoCreated" }
+    // rc.37 rejects static-path intersections even when HTTP methods differ.
+    { method: "POST", path: "/xai/v1/videos/generations", type: "submit", decode: "generateVideo", render: "videoCreated" }
   ],
   protocols: ["openai_video"]
 };
